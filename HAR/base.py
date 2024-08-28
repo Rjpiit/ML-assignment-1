@@ -6,203 +6,233 @@ You will be expected to use this to make trees for:
 > real input, discrete output
 > discrete input, real output
 """
-from dataclasses import dataclass
+
 from typing import Literal
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from .utils import *
+from .utils import entropy, information_gain, gini_index
+
 
 np.random.seed(42)
 
-def all_elements_equal(series):
-    return series.nunique() == 1
 
-@dataclass
-# Node1 is for building the decision tree for (Discrete input, Real output) to avoid confusion while merging others' code
-class Node1:
-    def __init__(self, X: pd.DataFrame, y: pd.Series, max_depth = 5, name=None, depth=0, crit="information_gain"):
-        self.name = name
-        self.depth = depth
-        feature = opt_split_attribute(X,y)
-        self.feature = feature
-        self.value = None
-        self.child = []
-        if max_depth == 1 or all_elements_equal(y):
-            avg = 0
-            for i in y:
-                avg += i
-            avg = avg/len(y)
-            self.value = avg
-            return None
-        else:
-            for each in X[feature].unique():
-                X_new = X[X[feature] == each]
-                y_new = y[X[feature] == each]
-                X_new = X_new.drop(feature, axis=1)
-                self.child.append(Node1(X_new,y_new,max_depth-1,each, depth+1))
-    
-    def _print_(self, gap=0):
-        if self.value is not None:  # Prints all the leaf nodes
-            print("|   "*gap + "|--- val = {:.2f} Depth = {}".format(self.value, self.depth))
-        else:
-            print("|   "*gap + "| ?(X({}) = {}):".format(self.feature, self.name))
-            for child in self.child:
-                child._print_(gap + 1)
+class node:
+    def __init__(self, val=None, depth=None, col_used=None):
 
-class Node:
-    
-    def __init__(self, val=None, depth=None, column_req=None):
-        self.value = val
-        self.depth = depth
-        self.column_req = column_req
-        self.child = {}
-        self.split_value=None
-        if column_req is None:
-            self.leaf = True
+        self.val = val  # stores the value of the node, mean/ mode of the output
+        self.depth = depth  # depth of the node in the decision tree
+        self.child_ = {}  # dictionary containing the children of the node
+        self.col_used = col_used  # the name of the column used by the node to split further
+        self.split_val = None  # the mean value used to split the table in case of continous input
+        self.prob = None
+        # in order to determine with the node is a leaf node
+        if(col_used == None):
+            self.is_leaf = True
         else:
-            self.leaf = False
+            self.is_leaf = False
+    # the function to return the predicted output for a given input dataframe
 
-    def node_val(self, X, max_depth = float('inf')):
-        if self.leaf==True or self.depth>=max_depth:
-            return self.value
+    def ret_val(self, X, max_depth=np.inf):
+        # the node is a leaf node or the max_depth has been reached
+        if(self.is_leaf or self.depth >= max_depth):
+            return(self.val)  # the value of the node is returned
+
         else:
-                
-            if X[self.column_req] < self.split_value:
-                return self.child['left'].node_val(X, max_depth)
+            if(self.split_val == None):  # in case the node takes discrete values
+                # checking if the attribute value is present in the children nodes
+                if(X[self.col_used] in self.child_):
+                    # recursively calling ret_val on the corresponding node
+                    return self.child_[X[self.col_used]].ret_val(X, max_depth=max_depth)
+                else:
+                    # in case the attribute value is not present
+                    prob_max = 0
+                    child = None
+                    for xi in self.child_:
+                        if self.child_[xi].prob > prob_max:
+                            prob_max = self.child_[xi].prob
+                            child = self.child_[xi]
+                    # recursively pass the function to the node with the highest probability
+                    return(child.get_node_val(X.drop(self.col_used), max_depth=max_depth))
+            else:  # in case the node takes continous values
+                if(X[self.col_used] <= self.split_val):
+                    # comparing the checking the corresponding attribute value and recursively passing to the corresponding node
+                    return(self.child_["left"].ret_val(X, max_depth=max_depth))
+                else:
+                    return(self.child_["right"].ret_val(X, max_depth=max_depth))
+
+    # A function used to print the whole tree which considers the cases of node being leaf or not
+    def _print_(self, gap=0, sta=None):
+        if self.is_leaf:  # Prints all the leaf nodes
+            if self.val.dtype.name == "str":
+                if(sta == None):
+                    print("|   "*gap +
+                          "|--- val = {} Depth = {}".format(self.val, self.depth))
+                else:
+                    print("|   "*gap + sta +
+                          "|--- val = {} Depth = {}".format(self.val, self.depth))
             else:
-                return self.child['right'].node_val(X, max_depth)
-            
-    def _print_(self, indent=0):
-        """
-        Function to recursively print the entire tree structure
-        """
-        if self.leaf:
-            print(' ' * indent + f'Predict: {self.value}')
+                if(sta == None):
+                    print("|   "*gap +
+                          "|--- val = {:.2f} Depth = {}".format(self.val, self.depth))
+                else:
+                    print("|   "*gap + sta +
+                          "|--- val = {:.2f} Depth = {}".format(self.val, self.depth))
         else:
-            print(' ' * indent + f'[X{self.column_req} < {self.split_value}]')
-            print(' ' * indent + f'Y:')
-            self.child['left']._print_(indent + 2)
-            print(' ' * indent + f'N:')
-            self.child['right']._print_(indent + 2)
+            Hi = False
+            for xi in self.child_:
+                if self.child_[xi].prob != None:
+                    Hi = True
+            if(Hi):  # for non-leaf node
+                if sta == None:
+                    print("|   "*gap, end="")
+                else:
+                    print("|   "*gap + sta, end="")
+                count = 0
+                for xi in self.child_:  # for discrete input, to print the checking of equality to the attribute value
+                    if count == 0:
+                        print("| ?(X({}) = {}):".format(self.col_used, xi))
+                        count = 9287
+                    else:
+                        print("|   "*gap +
+                              "| ?(X({}) = {}):".format(self.col_used, xi))
 
+                    self.child_[xi]._print_(gap + 1)
+            else:  # for continuous input
+                # checking the sign of child
+                if(sta == None):
+                    sta = ""
+                sign = ">"
+                print("|   "*gap + sta + "| ?(X({}) {} {:.2f}):".format(self.col_used,
+                                                                        sign, self.split_val))
+                sta = None
+                for xi in self.child_:
+                    if xi == "left":
+                        sta = "N: "
+                    else:
+                        sta = "Y: "
+                    # recursively pasing to the next node with an increment in the gap
+                    self.child_[xi]._print_(gap + 1, sta)
 
 
 class DecisionTree:
-    criterion: Literal["information_gain", "gini_index"]  # criterion won't be used for regression
+    # criterion won't be used for regression
+    criterion: Literal["information_gain", "gini_index"]
     max_depth: int  # The maximum depth the tree can grow to
 
-    def __init__(self, criterion, max_depth=5):
+    def __init__(self, criterion="information_gain", max_depth=20):
+        # to record the criterion measure the randomness of the data
         self.criterion = criterion
-        self.max_depth = max_depth
-        self.root=None
+        self.max_depth = max_depth  # max_depth that can be reached
+        self.root = None           # to store the root of the decision tree
+        self.Y_name = None         # name of the output column
+        self.y_type = None         # data type of output
+        self.size_X = None         # row size of the input dataframe
 
-    def build_tree(self, X: pd.DataFrame, y: pd.Series, cur_depth) -> None:
-        """
-        Function to construct the decision tree
-        """
+    # function to build the tree
+    def rec_build(self, X, Y, cur_root=None, depth=0):
 
-        # If you wish your code can have cases for different types of input and output data (discrete, real)
-        # Use the functions from utils.py to find the optimal attribute to split upon and then construct the tree accordingly.
-        # You may(according to your implemetation) need to call functions recursively to construct the tree. 
+        # base case : output has only one value
+        if(len(Y.unique()) == 1):
+            # node is added with value equal to the single output value
+            return node(val=Y[0], depth=depth)
 
-        if cur_depth<self.max_depth and X.size > 1 and (max(list(X.nunique()))) > 1:
-            # print(cur_depth)
-            
+        # ensuring that
+        # 1. there is atleast one column with more than one unique value
+        # 2. The depth limit hasnt been reached yet
+        # 3. the input dataframe has atleast one entry
 
-            
-                
-            max_info_gain = -float("inf")
-            split_val = None
-            column_req = None
+        elif((max(list(X.nunique()))) > 1 and X.size > 0 and depth < self.max_depth):
+            # Finding the column with the maximum information gain
+            info_max = -np.inf
+            store_tup = None  # to store the value of the output tuple
+            col_used = None  # the index of the column used in the split
+            # iterating throught the columns inorder to find the attribute that gives that maximum info_gain
             for column in X:
-                # print(column)
                 attr = pd.Series(X[column])
-                split, info_gain = information_gain(y, attr, self.criterion)
-                if(info_gain > max_info_gain):
-                    max_info_gain = info_gain
-                    split_val = split
-                    column_req = column
-
-        
-            # print(column_req, split_val)
-            newnode = Node(column_req=column_req)
-        
-
-            # print(column_req)
-            dict1 = {1:X[column_req], 2:y}
+                tup_out = information_gain(Y, attr, self.criterion)
+                info_gain = tup_out[1]
+                if(info_gain > info_max):
+                    info_max = info_gain
+                    store_tup = tup_out
+                    col_used = column
+            # Now we have located the column that has to be used for the split
+            node_new = node(col_used=col_used)
+            # to store the best split value in case of continous attribute and None value otherwise
+            split = store_tup[0]
+            attr = pd.Series(X[col_used])
+            dict1 = {1: Y, 2: attr}
             dict1 = pd.concat(dict1, axis=1)
-        
+            if(split == False):  # this implies that the input column is discrete
 
-            # if split_val != False:
-            newnode.split_value=split_val
-            
-            X_left = X[X[column_req]<split_val].reset_index(drop=True)
-            X_right = X[X[column_req]>=split_val].reset_index(drop=True)
+                uni_attr = attr.unique()
+                for xi in uni_attr:
+                    # creating a dataframe with the corresponding attribute value for the attribute column
+                    df1 = X[X[col_used] == xi].reset_index(drop=True)
+                    # removing the column used for splitting the data
+                    df1.drop(col_used, axis=1)
+                    dict_ini_2 = dict1[dict1[2] == xi]
+                    y_ = dict_ini_2.iloc[:, 0].reset_index(drop=True)
+                    # building a subtree with sub table obtained and passing the corresponding output
+                    node_new.child_[xi] = self.rec_build(
+                        df1, y_, node_new, depth=depth+1)
+                    # setting the prob of getting each child
+                    node_new.child_[xi].prob = len(df1)/self.size_X
+            else:  # in case the input column is continous
+                # We dont have to drop any columns in this case
+                node_new.split_val = split
+                # print(node_new.split_val)
+                # spliting the dataframe and the outputs and passing them recursively to make the corresponding subtrees
+                X_left = X[X[col_used] <= split].reset_index(drop=True)
+                X_right = X[X[col_used] > split].reset_index(drop=True)
 
+                y_left = (dict1[dict1[2] <= split]).iloc[:,
+                                                         0].reset_index(drop=True)
+                y_right = (dict1[dict1[2] > split]).iloc[:,
+                                                         0].reset_index(drop=True)
 
-            y_left = (dict1[dict1[1] <= split_val]).iloc[:,-1].reset_index(drop=True)
-            y_right = (dict1[dict1[1] > split_val]).iloc[:,-1].reset_index(drop=True)
-            del X_left[column_req]
-            del X_right[column_req]
-            newnode.child.update({'left' : self.build_tree(X_left, y_left,cur_depth+1)})
-            newnode.child.update({'right' : self.build_tree(X_right, y_right,cur_depth+1)})
-            # print(self.build_tree(X_left, y_left, newnode, cur_depth+1))
-            # print(X_left, y_left, newnode.value, cur_depth)
-        
-            if not check_ifreal(y):
-                newnode.val = y.mode()[0]
-            else:
-                newnode.val = y.mean()
-                
-            newnode.depth = cur_depth
-            return newnode
+                node_new.child_["right"] = self.rec_build(
+                    X_right, y_right, node_new, depth=depth+1)
+                node_new.child_["left"] = self.rec_build(
+                    X_left, y_left, node_new, depth=depth+1)
+            # setting the value of the newly created node
+            if Y.dtype.name == "category":  # in case of discrete output
+                node_new.val = Y.mode()[0]
+            else:  # in case of continous output
+                node_new.val = Y.mean()
+            # setting the depth of the current node
+            node_new.depth = depth
 
-        else:
-            if y.dtype.name == "category": 
-                return Node(val=y.mode()[0], depth=cur_depth)
-            else:
-                return Node(val=y.mean(), depth=cur_depth)
-            
+            return node_new
+        else:  # in all the cases left(max-depth, end of dataset, no district inputs) mean/mode has to be returned
+            if Y.dtype.name == "category":  # in case of discrete input
+                return node(val=Y.mode()[0], depth=depth)
+            else:  # in case of continous input
+                return node(val=Y.mean(), depth=depth)
 
-
-
-    def fit(self, X: pd.DataFrame, y: pd.Series):
+    def fit(self, X: pd.DataFrame, Y: pd.Series) -> None:
         """
-        Function to train the model
+        Function to train and construct the decision tree
         """
-        self.y = y
-        self.X = X
-        if (not check_ifreal(y) and any(check_ifreal(X[j]) for j in X)) or (check_ifreal(y) and any(check_ifreal(X[j]) for j in X)): # for Real input and Discrete/Real output
-            self.root = self.build_tree(X, y, cur_depth = 0)
-        elif (check_ifreal(y) and not any(check_ifreal(X[j]) for j in X)) or (not check_ifreal(y) and not any(check_ifreal(X[j]) for j in X)): # for Discrete input and real/Discrete output
-            self.tree = Node1(X,y,self.max_depth,"root",crit = self.criterion)
+        # recording the output type and intialising the tree formation
+        self.Y_name = Y.name  # assigning the name of the output column
+        self.size_X = len(X)
+        # Creating the tree and storing the root node
+        self.root = self.rec_build(X=X, Y=Y)
+        self.y_type = Y.dtype
+        self.root.prob = 1  # probability of the root node is always 1
 
-
-    def predict(self, X: pd.DataFrame, max_depth=5) -> pd.Series:
+    def predict(self, X: pd.DataFrame, max_depth=np.inf):
         """
         Funtion to run the decision tree on test inputs
         """
-
-        # Traverse the tree you constructed to return the predicted values for the given test inputs.
-        if (not check_ifreal(self.y) and any(check_ifreal(X[j]) for j in X)) or (check_ifreal(self.y) and any(check_ifreal(X[j]) for j in X)):
-            y = []
-            for ind in X.index:
-                y.append(self.root.node_val(X.loc[ind], max_depth))
-            return pd.Series(y)
-        elif (check_ifreal(self.y) and not any(check_ifreal(X[j]) for j in X)) or (not check_ifreal(self.y) and not any(check_ifreal(X[j]) for j in X)):
-            y_hat = []
-            for _, row in X.iterrows():
-                node1 = self.tree
-                while node1.value is None:
-                    feature_value = row[node1.feature]
-                    for child in node1.child:
-                        if child.name == feature_value:
-                            node1 = child
-                            break
-                y_hat.append(node1.value)
-            return pd.Series(y_hat)
+        Y = []  # initialising a list to store the predicted output values
+        for xi in X.index:
+            # passing the corresponding row to ret_val to get the output
+            Y.append(self.root.ret_val(X.loc[xi], max_depth=max_depth))
+        # return the output stored in the form a Series
+        return(pd.Series(Y, name=self.Y_name).astype(self.y_type))
 
     def plot(self) -> None:
         """
@@ -216,26 +246,4 @@ class DecisionTree:
             N: Class C
         Where Y => Yes and N => No
         """
-        if not check_ifreal(self.y) and check_ifreal(self.X[0]):
-            pass
-        elif (check_ifreal(self.y) and not any(check_ifreal(self.X[j]) for j in self.X)) or (not check_ifreal(self.y) and not any(check_ifreal(self.X[j]) for j in self.X)):
-            self.tree._print_()
-        else:
-            self.root._print_()
-
-# N = 30
-# P = 5
-# X = pd.DataFrame({i: pd.Series(np.random.randint(P, size=N), dtype="category") for i in range(5)})
-# y = pd.Series(np.random.randint(P, size=N), dtype="category")
-
-# for criteria in ["information_gain", "gini_index"]:
-#     tree = DecisionTree(criterion=criteria)  # Split based on Inf. Gain
-#     tree.fit(X, y)
-#     y_hat = tree.predict(X)
-#     print(y_hat)
-#     tree.plot()
-#     print("Criteria :", criteria)
-#     print("Accuracy: ", accuracy(y_hat, y))
-#     for cls in y.unique():
-#         print("Precision: ", precision(y_hat, y, cls))
-#         print("Recall: ", recall(y_hat, y, cls))
+        self.root._print_()
