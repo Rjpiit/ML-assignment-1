@@ -1,4 +1,8 @@
 *.pyc
 .DS_Store
 # .gitignore
+<<<<<<< HEAD
 .env
+=======
+.env
+>>>>>>> a22767372c0cabf7cc60221035c7e22dd6d804b5
